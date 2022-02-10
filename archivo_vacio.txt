@@ -1,0 +1,1944 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+#include <EEPROM.h>
+#ifdef __AVR__
+  #include <avr/power.h>
+#endif
+
+LiquidCrystal_I2C lcd (0x27,16,2);
+
+
+/************************************ Pines *********************************/
+
+// Arreglo de botones y último estado del botón
+// Nota: Los siguientes "DEFINE" son únicamente para
+// mejorar la lectura del código al momento de codificar.
+#define BTN_MENU  0
+#define BTN_EXIT  1
+#define BTN_UP    2
+#define BTN_DOWN  3
+#define BTN_P1    4
+#define BTN_P2    5
+#define BTN_P3    6
+#define BTN_P4    7
+
+// MENU D9
+// EXIT D10
+// UP D11
+// DOWN D12
+// P1 D13
+// P2 A0
+// P3 A1
+// P4 A2
+
+#define  MICRO 8 //D8
+#define InteGas  6 //D7
+#define Apagado  7//D6
+
+int aux =  0;
+// Este arreglo contiene los pines utilizados para los botones
+int button[8] = {
+  9,
+  10,
+  11,
+  12,
+  13,
+  A0,
+  A1,
+  A2
+};
+
+// SALIDAS
+#define ReleVacio A3
+#define ReleGas 4
+#define ReleCoginete 2
+#define ReleSello 3
+#define ReleDesfogue 5
+
+// DESFOGUE A3
+// SELLADO D3
+// COGINETE D2
+// GAS D4
+// VACIO D5
+
+// Este arreglo contiene el último estado conocido de cada línea
+int button_estate[8];
+
+/********************************* Globales *********************************/
+// Estado de nuestro autómata
+#define S_HOME  0
+#define S_SET_R 1
+#define S_SET_G 2
+#define S_SET_B 3
+#define S_SET_P1 4
+#define S_SET_P2 5
+#define S_SET_P3 6
+#define S_SET_P4 7
+
+uint8_t estado = S_HOME;
+
+// Información de color RGB
+
+int V =  EEPROM[30];
+int G =  EEPROM[31];
+int C = 2;
+int S1 = EEPROM[32];
+int S2 = 2;
+
+//P1
+int V1 = 60;
+int G1 = 40;
+int S_1 = 5;
+
+//P2
+int V2 = 60;
+int G2 = 40;
+int S_2 = 5;
+
+//P3
+int V3 = 60;
+int G3 = 40;
+int S_3 = 5;
+
+//P4
+int V4 = 60;
+int G4 = 40;
+int S_4 = 5;
+
+int cont = 0;
+int seguro = 0;
+int segurogas=0;
+
+
+/*************************** Inicialización *********************************/
+void setup() {
+   lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  Serial.begin(9600);  
+  // Configurar como PULL-UP para ahorrar resistencias
+  pinMode(button[BTN_MENU], INPUT);
+  pinMode(button[BTN_EXIT], INPUT);
+  pinMode(button[BTN_UP], INPUT);
+  pinMode(button[BTN_DOWN], INPUT);
+  pinMode(button[BTN_P1], INPUT_PULLUP);
+  pinMode(button[BTN_P2], INPUT_PULLUP);
+  pinMode(button[BTN_P3], INPUT_PULLUP);
+  pinMode(button[BTN_P4], INPUT_PULLUP);
+  
+  
+  pinMode(MICRO, INPUT);
+  pinMode(InteGas, INPUT);
+  pinMode(Apagado, INPUT);
+
+     pinMode(ReleVacio, OUTPUT);
+     pinMode(ReleGas, OUTPUT); 
+     pinMode(ReleSello, OUTPUT); 
+     pinMode(ReleCoginete, OUTPUT); 
+     pinMode(ReleDesfogue, OUTPUT);  
+
+    // SOLO SE EJECUTA UNA VEZ
+   // EEPROM[3] = 0;
+   // EEPROM[4] = 1;
+   // EEPROM[0] = 1;
+ //   EEPROM[1] = 1;
+  //  EEPROM[2] = 1;
+    
+  //  EEPROM[5] = 1;
+  //  EEPROM[6] = 1;
+   // EEPROM[7] = 1;
+    
+  //  EEPROM[8] = 1;
+  //  EEPROM[9] = 1;
+  //  EEPROM[10] = 1;
+    
+  //  EEPROM[14] = 1;
+  //  EEPROM[15] = 1;
+  //  EEPROM[16] = 1;
+
+   // EEPROM[30] = 1;
+  //  EEPROM[31] = 1;
+  //  EEPROM[32] = 1;
+    
+     
+    
+  // Se asume que el estado inicial es HIGH
+  button_estate[0] = HIGH;
+  button_estate[1] = HIGH;
+  button_estate[2] = HIGH;
+  button_estate[3] = HIGH;
+  button_estate[4] = HIGH;
+  button_estate[5] = HIGH;
+  button_estate[6] = HIGH;
+  button_estate[7] = HIGH;
+ 
+  // Iniciar helpers
+
+seguro = 1;
+  lcd.begin(16, 2); // User interface
+  lcd.setCursor(0, 0);
+  lcd.display();
+  lcd.print("    <EFITEC>");
+  lcd.setCursor(0, 1);
+  lcd.print(" **BIENVENIDO** ");
+    delay (500); 
+    delay (500); 
+    delay (500); 
+    
+ lcd.clear();
+  // Desplegar la info por defecto
+  showColor();
+  printHome();
+
+   
+}
+
+// Facilita la detección de flancos de subidan en los pines
+// monitoreados. Asume la existencia de un arreglo button
+// con la asignación actual de pines y un arreglo button_estate
+// con los valores de línea
+  int flancoSubida(int btn) {
+ int valor_nuevo = digitalRead(button[btn]);
+  int result = button_estate[btn]!=valor_nuevo && valor_nuevo == 1;
+  button_estate[btn] = valor_nuevo;
+  return result;
+}
+
+// Despliega el color seleccionado en el LED AQUI VAMOS A ASIGNAR LOS VALORES
+//
+void showColor() {
+   digitalWrite(ReleDesfogue, LOW);
+lcd.setCursor(4,1);  
+lcd.print(V);                 // Sin este codigo, se muestra asi: H:M:S  (1:M:S)
+lcd.print("- ");
+
+lcd.print(G, DEC);               // Sin este codigo, se muestra asi: H:M:S  (H:1:S)
+lcd.print(" -");
+
+lcd.print(S2);               // Sin este codigo, se muestra asi: H:M:S  (H:1:S)
+lcd.print(".");
+lcd.print(S1);
+}
+
+/******************* Utilitarios de dibujado ****************************/
+
+void printHome() {
+   digitalWrite(ReleDesfogue, LOW);
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("  VAC-GAS-SELL");
+  printColor();
+    digitalWrite(ReleVacio, LOW);
+     digitalWrite(ReleGas, LOW);
+      digitalWrite(ReleSello, LOW);
+      digitalWrite(ReleCoginete, LOW);
+       digitalWrite(ReleDesfogue, LOW);
+}
+
+void printPink() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("  DESFOGUE");
+  
+}
+
+
+// METODOS DE VACIO
+void printRed() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("     VACIO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+   if(V<=9){
+    lcd.print("0");}
+  lcd.print(V, DEC);
+  lcd.print("s");
+ 
+}
+
+
+void printRed1() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("    R-1 VACIO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+   if(V1<=9){
+    lcd.print("0");}
+  lcd.print(V1, DEC);
+  lcd.print("s");
+ 
+}
+
+
+void printRed2() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("    R-2 VACIO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+   if(V2<=9){
+    lcd.print("0");}
+  lcd.print(V2, DEC);
+  lcd.print("s");
+ 
+}
+
+
+void printRed3() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("    R-3 VACIO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+   if(V3<=9){
+    lcd.print("0");}
+  lcd.print(V3, DEC);
+  lcd.print("s");
+ 
+}
+
+void printRed4() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("    R-4 VACIO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+   if(V4<=9){
+    lcd.print("0");}
+  lcd.print(V4, DEC);
+  lcd.print("s");
+ 
+}
+
+
+
+// *** METODOS DE GAS
+void printGreen() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("     GAS");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  if(G<=9){
+    lcd.print("0");}
+  lcd.print(G, DEC);
+  lcd.print("s");
+}
+
+void printGreen1() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("     R-1 GAS");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  if(G1<=9){
+    lcd.print("0");}
+  lcd.print(G1, DEC);
+  lcd.print("s");
+}
+
+void printGreen2() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("     R-2 GAS");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  if(G2<=9){
+    lcd.print("0");}
+  lcd.print(G2, DEC);
+  lcd.print("s");
+}
+
+void printGreen3() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("     R-3 GAS");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  if(G3<=9){
+    lcd.print("0");}
+  lcd.print(G3, DEC);
+  lcd.print("s");
+}
+
+void printGreen4() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("     R-4 GAS");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  if(G4<=9){
+    lcd.print("0");}
+  lcd.print(G4, DEC);
+  lcd.print("s");
+}
+
+
+//METODOS DE SELLO
+void printBlue() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("      SELLO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S1, DEC);
+  lcd.print("s");
+}
+
+void printBlue1() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("     R-1 SELLO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S_1, DEC);
+  lcd.print("s");
+}
+
+void printBlue2() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("     R-2 SELLO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S_2, DEC);
+  lcd.print("s");
+}
+
+void printBlue3() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("    R-3 SELLO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S_3, DEC);
+  lcd.print("s");
+}
+
+void printBlue4() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("    R-4 SELLO");
+  lcd.setCursor(0,1);
+  lcd.print("Tiempo=00:");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S_4, DEC);
+  lcd.print("s");
+}
+// METODOS RECETAS
+
+void programa1 (){
+ lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("   RECETA 1");
+   Serial.println("Lectura de Memoria1:");  // imprime texto
+     for (int i = 0; i <= 2; i++) {   
+        Serial.println( EEPROM.read(i));   // Lee los datos de la memoria EEPROM
+        delay (100);
+    }
+ 
+  
+}
+
+void programa2 (){
+ lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("   RECETA 2");
+   Serial.println("Lectura de Memoria2:");  // imprime texto
+     for (int i = 5; i <= 7; i++) {   
+        Serial.println( EEPROM.read(i));   // Lee los datos de la memoria EEPROM
+        delay (100);
+    }
+ 
+  
+}
+
+void programa3 (){
+ lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("   RECETA 3");
+   Serial.println("Lectura de Memoria3:");  // imprime texto
+     for (int i = 8; i <= 10; i++) {   
+        Serial.println( EEPROM.read(i));   // Lee los datos de la memoria EEPROM
+        delay (100);
+    }
+ 
+  
+}
+
+
+void programa4 (){
+ lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("   RECETA 4");
+   Serial.println("Lectura de Memoria4:");  // imprime texto
+     for (int i = 14; i <= 16 ; i++) {   
+        Serial.println( EEPROM.read(i));   // Lee los datos de la memoria EEPROM
+        delay (100);
+    }
+ 
+  
+}
+
+
+// METODOS IMPRIMIR TIEMPOS
+
+void printColor() {
+  lcd.setCursor(0,1);
+  lcd.print("T: ");
+  lcd.print(V, DEC);
+  lcd.print("-");
+  lcd.print(G, DEC);
+  lcd.print("-");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S1, DEC);
+  lcd.print("s");
+}
+
+void printColor1() {
+  lcd.setCursor(0,1);
+  lcd.print("T: ");
+  lcd.print(V1, DEC);
+  lcd.print("-");
+  lcd.print(G1, DEC);
+  lcd.print("-");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S_1, DEC);
+  lcd.print("s");
+}
+
+void printColor2() {
+  lcd.setCursor(0,1);
+  lcd.print("T: ");
+  lcd.print(V2, DEC);
+  lcd.print("-");
+  lcd.print(G2, DEC);
+  lcd.print("-");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S_2, DEC);
+  lcd.print("s");
+}
+
+void printColor3() {
+  lcd.setCursor(0,1);
+  lcd.print("T: ");
+  lcd.print(V3, DEC);
+  lcd.print("-");
+  lcd.print(G3, DEC);
+  lcd.print("-");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S_3, DEC);
+  lcd.print("s");
+}
+void printColor4() {
+  lcd.setCursor(0,1);
+  lcd.print("T: ");
+  lcd.print(V4, DEC);
+  lcd.print("-");
+  lcd.print(G4, DEC);
+  lcd.print("-");
+  lcd.print(S2, DEC);
+  lcd.print(".");
+  lcd.print(S_4, DEC);
+  lcd.print("s");
+}
+// Máquina de estados
+void loop() {
+   
+  
+ 
+  switch(estado) {     
+
+    
+    case S_HOME: /*** INICIO ESTADO S_HOME ***/
+
+ if(flancoSubida(BTN_P1)) { // Transición BTN_P1
+        estado = S_SET_P1;
+        programa1();
+        break;
+      }
+
+        if(flancoSubida(BTN_P2)) { // Transición BTN_P 2
+        estado = S_SET_P2;
+        programa2();
+        break;
+      }
+
+       if(flancoSubida(BTN_P3)) { // Transición BTN_P3
+        estado = S_SET_P3;
+        programa3();
+        break;
+      }
+
+       if(flancoSubida(BTN_P4)) { // Transición BTN_P4
+        estado = S_SET_P4;
+        programa4();
+        break;
+      }
+    
+    // MICRO APAGADO
+while(digitalRead(MICRO) == LOW && aux == 1) { // Transición BTN_MENU
+       digitalWrite(ReleVacio, LOW);
+      digitalWrite(ReleGas, LOW);
+      digitalWrite(ReleSello, LOW);
+      digitalWrite(ReleCoginete, LOW);
+        digitalWrite(ReleDesfogue, LOW);
+        estado = S_HOME;
+       V = EEPROM[30];
+       G = EEPROM[31];
+       S1 = EEPROM[32];
+       S2 = 2;
+       C = 2;
+       seguro = 0;
+        printHome();
+        aux = 0;
+         break;
+
+      if (  segurogas==1 && EEPROM[30]<1){
+        digitalWrite(ReleDesfogue, LOW);
+        estado = S_HOME;
+        V = EEPROM[30];
+        S1 = EEPROM[32];
+        S2 = 2;
+        C = 2;
+        printHome();
+        aux = 0;
+         break;
+        
+        }  
+        if (  segurogas==0 && EEPROM[30]<1){
+          digitalWrite(ReleDesfogue, LOW);
+       estado = S_HOME;
+       V = EEPROM[30];
+       G = EEPROM[31];
+       S1 = EEPROM[32];
+       S2 = 2;
+       C = 2;
+        printHome();
+        
+        aux = 0;
+         break;
+        }
+
+        if (EEPROM[30]==1){
+          digitalWrite(ReleDesfogue, LOW);
+       V = 60;
+       G = 40;
+       S1 = 5;
+       S2 = 2;
+       C = 2;
+        printHome();
+        aux = 0;
+         break;
+        }
+          
+}
+      
+      // proceso
+     //MICRO ENCENDIDO DEL PROCESO      
+    while (digitalRead(MICRO) == HIGH && aux == 0 ){
+
+
+seguro = 0;
+      
+ digitalWrite(ReleDesfogue, LOW);
+    // VACIO 
+    while (V > 0 && digitalRead(MICRO) == HIGH && seguro == 0){
+      
+      printRed(); 
+     digitalWrite(ReleVacio, HIGH);
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay(500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+       delay (500);          //Descontamos en periodos de 1 segundo
+                if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        V--;     
+   if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }     
+     } 
+      digitalWrite(ReleVacio, LOW);
+
+// GAS
+      if (digitalRead(InteGas) == HIGH)  {
+         while (G > 0 && V==0 && digitalRead(MICRO) == HIGH && seguro == 0){
+   
+          printGreen();
+      digitalWrite(ReleGas, HIGH);
+              if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+     delay (500); 
+         if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+     delay (500); //Descontamos en periodos de 1 segundo
+        G--;    
+                if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        segurogas= 0;
+         } 
+      
+      
+      } else if  (digitalRead(InteGas) == LOW){
+     
+      digitalWrite(ReleGas, LOW);
+       segurogas=1;
+      
+      }
+
+    digitalWrite(ReleGas, LOW); 
+
+// COGINETE
+     while (C > 0 && V==0 && G >=0 && digitalRead(MICRO) == HIGH && seguro == 0){
+   
+        printBlue();
+       digitalWrite(ReleCoginete, HIGH);
+              if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay (500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }  
+        delay (500);          //Descontamos en periodos de 1 segundo
+        C--;   
+               if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }  
+      }
+
+    // SELLO
+ 
+      while (S2>0 && V==0  && C == 0 && digitalRead(MICRO) == HIGH && seguro == 0){
+  
+       printBlue();
+       digitalWrite(ReleSello, HIGH);
+       digitalWrite(ReleCoginete, HIGH);
+               if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+Serial.println( seguro);
+     if(S1 > 0){
+        delay (10);          //Descontamos en periodos de 1 decima
+        S1--;  
+                if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        }
+
+    if(S1 == 0 ){
+delay (500);
+          if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+        delay (500);          //Descontamos en periodos de 1 segundo
+        S2--;  
+                if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        }
+ 
+      }
+        digitalWrite(ReleCoginete, LOW);
+       digitalWrite(ReleSello, LOW);
+       //DESFOGUE
+      
+      while (S2==0 && V==0 && G >=0 && C == 0 && digitalRead(MICRO) == HIGH){   
+        printPink();
+       digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+      Serial.println( seguro);
+      }
+
+////////////// DESFOGUE POR CANCEL
+      while(digitalRead(MICRO) == HIGH  && seguro == 1  ){
+      digitalWrite(ReleVacio, LOW);
+      digitalWrite(ReleGas, LOW);
+      digitalWrite(ReleSello, LOW);
+      digitalWrite(ReleCoginete, LOW);
+      printPink();
+      digitalWrite(ReleDesfogue, HIGH);
+      delay (1000);          //Descontamos en periodos de 1 segundo
+ 
+  }
+
+    
+      aux = 1;
+      
+
+     } 
+   
+
+  
+    
+    //  FIN DEL PROCESO
+    
+    if(flancoSubida(BTN_MENU)) { // Transición BTN_MENU
+        estado = S_SET_R;
+        printRed();
+        break;
+      }
+
+// RUTAS A LOS PROGRAMAS
+
+       
+      
+      break; 
+      
+      /*** FIN ESTADO S_HOME ***/
+
+/*** INICIO ESTADO S_SET_R ***/
+   
+    case S_SET_R: 
+      if(flancoSubida(BTN_MENU)) { // Transición BTN_MENU
+         EEPROM[30] = V;
+        delay(500);
+        estado = S_SET_G;
+        printGreen();
+        break;
+      }
+      if(flancoSubida(BTN_EXIT)) { // Transición BTN_EXIT
+        EEPROM[30] = V;
+        delay(500);
+        delay(500);
+       
+        estado = S_HOME;
+        printHome();
+        break;
+        
+      }
+      while(flancoSubida(BTN_UP)) {
+         lcd.clear();// Transición BTN_UP
+        if(V<60) {
+          V++;
+        } else {
+          V = 0;
+        }
+        showColor();
+        printRed();
+        break;
+      }
+      while(flancoSubida(BTN_DOWN)) { lcd.clear(); // Transición BTN_DWN
+        if(V>0) {
+          V--;
+        } else {
+          V = 90;
+        }
+        showColor();
+        printRed();
+        break;
+      }
+      break; /*** FIN ESTADO S_SET_R ***/
+    case S_SET_G: /*** INICIA ESTADO S_SET_G ***/
+      if(flancoSubida(BTN_MENU)) { // Transición BTN_MENU
+        EEPROM[31] = G;
+        delay(500);
+        estado = S_SET_B;
+        printBlue();
+        break;
+      }
+      if(flancoSubida(BTN_EXIT)) { // Transición BTN_EXIT
+        EEPROM[31] = G;
+        delay(500);
+        delay(500);
+        
+        estado = S_HOME;
+        printHome();
+        break;
+      }
+      if(flancoSubida(BTN_UP)) { lcd.clear(); // Transición BTN_UP
+        if(G<40) {
+          G++;
+        } else {
+          G = 0;
+        }
+        showColor();
+        printGreen();
+        break;
+      }
+      if(flancoSubida(BTN_DOWN)) { lcd.clear();
+        if(G>0) {
+          G--;
+        } else {
+          G = 40;
+        }
+        showColor();
+        printGreen();
+        break;
+      }
+      break; /*** FIN ESTADO S_SET_R ***/
+    
+    case S_SET_B: /*** INICIA ESTADO S_SET_B ***/
+      if(flancoSubida(BTN_MENU)) { // Transición BTN_MENU
+        estado = S_SET_R;
+         EEPROM[32] = S1;
+        delay(500);
+        printRed();
+        break;
+      }
+      if(flancoSubida(BTN_EXIT)) { // Transición BTN_EXIT
+        EEPROM[32] = S1;
+        delay(500);
+        delay(500);
+        estado = S_HOME;
+        printHome();
+        break; 
+      }
+      if(flancoSubida(BTN_UP)) { lcd.clear(); // Transición BTN_UP
+        if(S1<5) {
+          S1++;
+        } else {
+          S1= 0;
+        }
+        showColor();
+        printBlue();
+        break;
+      }
+      if(flancoSubida(BTN_DOWN)) { lcd.clear(); // Transición BTN_DWN
+        if(S1>0) {
+          S1--;
+        } else {
+          S1 = 5;
+        }
+        showColor();
+        printBlue();
+        break;
+      }
+      break; /*** FIN ESTADO S_SET_R ***/
+
+// estado PROGRAMA 1
+        
+        case S_SET_P1:
+
+      cont = 0;
+      
+     if(flancoSubida(BTN_EXIT)) { // Transición BTN_EXIT
+        estado = S_HOME;
+        printHome();
+        break;
+      }
+
+        if(flancoSubida(BTN_P2)) { // Transición BTN_P 2
+        estado = S_SET_P2;
+        programa2();
+        break;
+      }
+
+       if(flancoSubida(BTN_P3)) { // Transición BTN_P3
+        estado = S_SET_P3;
+        programa3();
+        break;
+      }
+
+       if(flancoSubida(BTN_P4)) { // Transición BTN_P4
+        estado = S_SET_P4;
+        programa4();
+        break;
+      }
+   
+
+    
+     // 
+     // GUARDADO DE MEMORIA
+     //flancoSubida(BTN_P1) -- digitalRead(button[BTN_P1]
+while(digitalRead(button[BTN_P1]) == HIGH && cont <= 5) { // Transición BTN_EXIT
+      Serial.println(cont);
+     cont++;
+       if (cont == 4){
+     EEPROM[0] = V;
+     EEPROM[1] = G;
+     EEPROM[2] = S1;
+     V1=EEPROM[0];
+     G1=EEPROM[1];
+     S_1=EEPROM[2];
+       lcd.clear();
+        printColor1();
+        programa1();
+    
+     delay (500);
+      delay (500);
+}
+
+      delay (500);
+      delay (500);
+      
+        
+      }
+  
+ 
+
+    // LECTURA DE MEMORIA
+    if (EEPROM[0]<= 90 && EEPROM[0]>= 1){
+     
+       
+     V1 = EEPROM[0];
+     G1 = EEPROM[1];
+     S_1 = EEPROM[2];
+     C = 2;
+     S2 = 2;
+     printColor1();
+     
+   // APAGADO DE MICRO
+  if(digitalRead(MICRO) == LOW && aux == 1) { // Transición BTN_MENU
+      
+        digitalWrite(ReleDesfogue, LOW);
+
+        if (segurogas==1){
+        
+        estado = S_SET_P1;
+        V1 = EEPROM[0];
+        S_1 = EEPROM[2];
+        S2 = 2;
+        C = 2;
+        programa1();
+        aux = 0;   
+        break;
+        
+        } 
+        estado = S_SET_P1;
+    V1 = EEPROM[0];
+     G1 = EEPROM[1];
+     S_1 = EEPROM[2];     
+       
+         programa1();
+        aux = 0;   
+        break;
+      }
+
+
+      // proceso
+     //MICRO ENTRADA ENCIENDE DEL PROCESO
+
+      
+    while (digitalRead(MICRO) == HIGH && aux == 0){
+
+seguro = 0;
+    // VACIO 
+    while (V1 > 0 && digitalRead(MICRO) == HIGH && seguro == 0)
+      {
+      printRed1(); 
+     digitalWrite(ReleVacio, HIGH);
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay(500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+       delay (500);          //Descontamos en periodos de 1 segundo
+                if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }      
+        
+        V1--;     
+ if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }  
+    } 
+          
+      digitalWrite(ReleVacio, LOW);
+
+// GAS
+      if (digitalRead(InteGas) == HIGH )  {
+         while (G1 > 0 && V1==0 && digitalRead(MICRO) == HIGH && seguro == 0){
+        
+          printGreen1();
+      digitalWrite(ReleGas, HIGH);
+      if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+     delay (500); 
+         if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+     delay (500);         //Descontamos en periodos de 1 segundo
+        G1--;   
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }           segurogas= 0;
+         } 
+      
+      
+      } else if  (digitalRead(InteGas) == LOW){
+      digitalWrite(ReleGas, LOW);
+             segurogas= 1;
+
+      
+      }
+
+    digitalWrite(ReleGas, LOW); 
+
+// COGINETE
+     while (C > 0 && V1==0 && G1 >=0 && digitalRead(MICRO) == HIGH && seguro == 0){
+       
+        printBlue1();
+       digitalWrite(ReleCoginete, HIGH);
+         if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay (500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }  
+        delay (500);            //Descontamos en periodos de 1 segundo
+        C--;    
+ if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }        
+    }
+
+    // SELLO
+ 
+      while (S2>0 && V1==0 && G1 >=0 && C == 0 && digitalRead(MICRO) == HIGH && seguro == 0){
+       
+       printBlue1();
+       digitalWrite(ReleSello, HIGH);
+       digitalWrite(ReleCoginete, HIGH);
+     //  seguro = EEPROM[3]; // asignamos cero a seguro
+
+     if(S_1 > 0){
+        delay (10);          //Descontamos en periodos de 1 decima
+        S_1--;  
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        }
+
+      if(S_1 == 0 ){
+     delay (500);
+          if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+        delay (500);         //Descontamos en periodos de 1 segundo
+        S2--;  
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        }
+ 
+      }
+        digitalWrite(ReleCoginete, LOW);
+       digitalWrite(ReleSello, LOW);
+       //DESFOGUE
+      
+      while (S2==0 && V1==0 && G1 >=0 && C == 0 && digitalRead(MICRO) == HIGH){   
+        printPink();
+       digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+      }
+    
+    //////////////
+      while(digitalRead(MICRO) == HIGH  && seguro == 1  ){
+      digitalWrite(ReleVacio, LOW);
+      digitalWrite(ReleGas, LOW);
+      digitalWrite(ReleSello, LOW);
+      digitalWrite(ReleCoginete, LOW);
+      printPink();
+      digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+  
+    
+  }
+
+           
+      aux = 1;
+
+
+     }
+    
+
+    }
+      break; //Fin p1
+
+// estado PROGRAMA 2
+        
+        case S_SET_P2:
+
+      cont = 0;
+      
+     if(flancoSubida(BTN_EXIT)) { // Transición BTN_EXIT
+        estado = S_HOME;
+        printHome();
+        break;
+      }  
+
+        if(flancoSubida(BTN_P1)) { // Transición BTN_P1
+        estado = S_SET_P1;
+        programa1();
+        break;
+      }
+
+       if(flancoSubida(BTN_P3)) { // Transición BTN_P3
+        estado = S_SET_P3;
+        programa3();
+        break;
+      }
+
+       if(flancoSubida(BTN_P4)) { // Transición BTN_P4
+        estado = S_SET_P4;
+        programa4();
+        break;
+      }
+     // 
+     // GUARDADO DE MEMORIA 2
+     //flancoSubida(BTN_P2) -- digitalRead(button[BTN_P1]
+ while(digitalRead(button[BTN_P2]) == HIGH && cont <= 5) { // Transición BTN_EXIT
+      Serial.println(cont);
+       cont++;
+       if (cont == 4){
+     EEPROM[5] = V;
+     EEPROM[6] = G;
+     EEPROM[7] = S1;
+     
+     V2=EEPROM[5];
+     G2=EEPROM[6];
+     S_2=EEPROM[7];
+       lcd.clear();
+       printColor2();
+        programa2();
+          
+      delay (500);
+      delay (500);
+       }
+        delay (500);
+      delay (500);
+      }
+  
+ 
+
+    // LECTURA DE MEMORIA
+    if (EEPROM[5]<= 90 && EEPROM[5]>= 1){
+     
+       
+     V2 = EEPROM[5];
+     G2 = EEPROM[6];
+     S_2 = EEPROM[7];
+     C = 2;
+     S2 = 2;
+     printColor2();
+     
+   // APAGADO DE MICRO
+  if(digitalRead(MICRO) == LOW && aux == 1) { // Transición BTN_MENU
+      
+        digitalWrite(ReleDesfogue, LOW);
+
+        if (segurogas==1){
+        
+        estado = S_SET_P2;
+        V2 = EEPROM[5];
+        S_2 = EEPROM[2];
+        S2 = 2;
+        C = 2;
+       programa2();
+        aux = 0;   
+        break;
+        
+        } 
+        estado = S_SET_P2;
+    V2 = EEPROM[5];
+     G2 = EEPROM[6];
+     S_2 = EEPROM[7];     
+       
+       programa2();
+        aux = 0;   
+        break;
+      }
+
+
+      // proceso
+     //MICRO ENTRADA ENCIENDE DEL PROCESO
+
+    while (digitalRead(MICRO) == HIGH && aux == 0){
+    
+seguro = 0;
+    // VACIO 
+    while (V2 > 0 && digitalRead(MICRO) == HIGH && seguro == 0)
+      {
+      printRed2(); 
+     digitalWrite(ReleVacio, HIGH);
+       if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay(500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+       delay (500);          //Descontamos en periodos de 1 segundo
+                if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }          //Descontamos en periodos de 1 segundo
+        V2--;     
+     if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }    
+    } 
+    
+      
+      digitalWrite(ReleVacio, LOW);
+
+// GAS
+      if (digitalRead(InteGas) == HIGH)  {
+         while (G2 > 0 && V2==0 && digitalRead(MICRO) == HIGH && seguro == 0){
+        
+          printGreen2();
+      digitalWrite(ReleGas, HIGH);
+     if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+     delay (500); 
+         if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+     delay (500);       //Descontamos en periodos de 1 segundo
+        G2--;    
+ if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }           segurogas= 0;
+         } 
+      
+      
+      } else if  (digitalRead(InteGas) == LOW){
+      digitalWrite(ReleGas, LOW);
+             segurogas= 1;
+
+      
+      }
+
+    digitalWrite(ReleGas, LOW); 
+
+// COGINETE
+     while (C > 0 && V2==0 && G2 >=0 && digitalRead(MICRO) == HIGH && seguro == 0){
+       
+        printBlue2();
+       digitalWrite(ReleCoginete, HIGH);
+       if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay (500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }  
+        delay (500);            //Descontamos en periodos de 1 segundo
+        C--;    
+ 
+               if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }        }
+
+    // SELLO
+ 
+      while (S2>0 && V2==0 && G2 >=0 && C == 0 && digitalRead(MICRO) == HIGH && seguro == 0){
+       
+       printBlue2();
+       digitalWrite(ReleSello, HIGH);
+       digitalWrite(ReleCoginete, HIGH);
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+     if(S_2 > 0){
+        delay (10);          //Descontamos en periodos de 1 decima
+        S_2--;  
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        
+        }
+
+      if(S_2 == 0 ){
+        delay (500);
+          if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+        delay (500);           //Descontamos en periodos de 1 segundo
+        S2--;  
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        }
+ 
+      }
+        digitalWrite(ReleCoginete, LOW);
+       digitalWrite(ReleSello, LOW);
+       //DESFOGUE
+      
+      while (S2==0 && V2==0 && G2 >=0 && C == 0 && digitalRead(MICRO) == HIGH){   
+        printPink();
+       digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+      }
+
+//////////////CANCEL
+      while(digitalRead(MICRO) == HIGH  && seguro == 1  ){
+      digitalWrite(ReleVacio, LOW);
+      digitalWrite(ReleGas, LOW);
+      digitalWrite(ReleSello, LOW);
+      digitalWrite(ReleCoginete, LOW);
+      printPink();
+      digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+  
+    
+  }
+           
+      aux = 1;
+
+
+     }
+     
+
+    }
+      break; //fin p2
+
+      // estado PROGRAMA 3
+        
+        case S_SET_P3:
+
+      cont = 0;
+      
+     if(flancoSubida(BTN_EXIT)) { // Transición BTN_EXIT
+        estado = S_HOME;
+        printHome();
+        break;
+      }   
+
+if(flancoSubida(BTN_P1)) { // Transición BTN_P1
+        estado = S_SET_P1;
+        programa1();
+        break;
+      }
+
+        if(flancoSubida(BTN_P2)) { // Transición BTN_P 2
+        estado = S_SET_P2;
+        programa2();
+        break;
+      }
+
+       if(flancoSubida(BTN_P4)) { // Transición BTN_P4
+        estado = S_SET_P4;
+        programa4();
+        break;
+      }
+       
+     // 
+     // GUARDADO DE MEMORIA
+     //flancoSubida(BTN_P1) -- digitalRead(button[BTN_P1]
+ while(digitalRead(button[BTN_P3]) == HIGH && cont <= 5 ) { // Transición BTN_EXIT
+      Serial.println(cont);
+        cont++;
+       if (cont == 4){
+     EEPROM[8] = V;
+     EEPROM[9] = G;
+     EEPROM[10] = S1;
+        
+     V3=EEPROM[8];
+     G3=EEPROM[9];
+     S_3=EEPROM[10];
+      lcd.clear();
+        programa3();
+         printColor3();
+      delay (500);
+      delay (500);
+       }
+       delay (500);
+      delay (500);
+      }
+  
+     // LECTURA DE MEMORIA
+    if (EEPROM[8]<= 90 && EEPROM[8]>= 0){
+     
+       
+     V3 = EEPROM[8];
+     G3 = EEPROM[9];
+     S_3 = EEPROM[10];
+     C = 2;
+     S2 = 2;
+     printColor3();
+     
+   // APAGADO DE MICRO
+  if(digitalRead(MICRO) == LOW && aux == 1) { // Transición BTN_MENU
+      
+        digitalWrite(ReleDesfogue, LOW);
+
+        if (segurogas==1){
+        
+        estado = S_SET_P3;
+        V3 = EEPROM[8];
+        S_3 = EEPROM[10];
+        S2 = 2;
+        C = 2;
+        programa3();
+        aux = 0;   
+        break;
+        
+        } 
+        estado = S_SET_P3;
+    V3 = EEPROM[8];
+     G3 = EEPROM[9];
+     S_3 = EEPROM[10];     
+       
+       programa3();
+        aux = 0;   
+        break;
+      }
+
+
+      // proceso
+     //MICRO ENTRADA ENCIENDE DEL PROCESO
+
+    while (digitalRead(MICRO) == HIGH && aux == 0){
+
+seguro = 0;
+    // VACIO 
+    while (V3 > 0 && digitalRead(MICRO) == HIGH && seguro == 0)
+      {
+      printRed3(); 
+     digitalWrite(ReleVacio, HIGH);
+       if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay(500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+       delay (500);          //Descontamos en periodos de 1 segundo
+                if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }          //Descontamos en periodos de 1 segundo
+        V3--;     
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }        } 
+    
+      
+      digitalWrite(ReleVacio, LOW);
+
+// GAS
+      if (digitalRead(InteGas) == HIGH)  {
+         while (G3 > 0 && V3==0 && digitalRead(MICRO) == HIGH && seguro == 0){
+        
+          printGreen3();
+      digitalWrite(ReleGas, HIGH);
+    if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+     delay (500); 
+         if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+     delay (500);        //Descontamos en periodos de 1 segundo
+        G3--;    
+ if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }           segurogas= 0;
+         } 
+      
+      
+      } else if  (digitalRead(InteGas) == LOW){
+      digitalWrite(ReleGas, LOW);
+             segurogas= 1;
+
+      
+      }
+
+    digitalWrite(ReleGas, LOW); 
+
+// COGINETE
+     while (C > 0 && V3==0 && G3 >=0 && digitalRead(MICRO) == HIGH && seguro == 0){
+       
+        printBlue3();
+       digitalWrite(ReleCoginete, HIGH);
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay (500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }  
+        delay (500);        
+        C--;    
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }        }
+
+    // SELLO
+ 
+   while (S2>0 && V3==0 && G3 >=0 && C == 0 && digitalRead(MICRO) == HIGH && seguro == 0){
+       
+       printBlue3();
+       digitalWrite(ReleSello, HIGH);
+       digitalWrite(ReleCoginete, HIGH);
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+     if(S_3 > 0){
+        delay (10);          //Descontamos en periodos de 1 decima
+        S_3--;  
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        }
+
+      if(S_3 == 0 ){
+        delay (500);
+          if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+        delay (500);        //Descontamos en periodos de 1 segundo
+        S2--;  
+        
+        }
+ 
+      }
+        digitalWrite(ReleCoginete, LOW);
+       digitalWrite(ReleSello, LOW);
+       //DESFOGUE
+      
+      while (S2==0 && V3==0 && G3 >=0 && C == 0 && digitalRead(MICRO) == HIGH){   
+        printPink();
+       digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+      }
+           //////////////
+      while(digitalRead(MICRO) == HIGH  && seguro == 1  ){
+      digitalWrite(ReleVacio, LOW);
+      digitalWrite(ReleGas, LOW);
+      digitalWrite(ReleSello, LOW);
+      digitalWrite(ReleCoginete, LOW);
+      printPink();
+      digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+  
+  }
+
+      aux = 1;
+
+
+     }
+    
+
+    }
+      break; //fin p3
+
+case S_SET_P4:
+
+      cont = 0;
+      
+     if(flancoSubida(BTN_EXIT)) { // Transición BTN_EXIT
+        estado = S_HOME;
+        printHome();
+        break;
+      }  
+
+if(flancoSubida(BTN_P1)) { // Transición BTN_P1
+        estado = S_SET_P1;
+        programa1();
+        break;
+      }
+
+        if(flancoSubida(BTN_P2)) { // Transición BTN_P 2
+        estado = S_SET_P2;
+        programa2();
+        break;
+      }
+
+       if(flancoSubida(BTN_P3)) { // Transición BTN_P3
+        estado = S_SET_P3;
+        programa3();
+        break;
+      }
+     // 
+     // GUARDADO DE MEMORIA
+     //flancoSubida(BTN_P4) -- digitalRead(button[BTN_P1]
+ while(digitalRead(button[BTN_P4]) == HIGH && cont <= 5 ) { // Transición BTN_EXIT
+      Serial.println(cont);
+        cont++;
+       if (cont == 4){
+     EEPROM[14] = V;
+     EEPROM[15] = G;
+     EEPROM[16] = S1;
+        
+     V4=EEPROM[14];
+     G4=EEPROM[15];
+     S_4=EEPROM[16];
+      lcd.clear();
+        programa4();
+         printColor4();
+      delay (500);
+      delay (500);
+       }
+       delay (500);
+      delay (500);
+      }
+  
+     // LECTURA DE MEMORIA
+    if (EEPROM[14]<= 90 && EEPROM[14]>= 0){
+     
+       
+     V4 = EEPROM[14];
+     G4 = EEPROM[15];
+     S_4 = EEPROM[16];
+     C = 2;
+     S2 = 2;
+     printColor4();
+     
+   // APAGADO DE MICRO
+  if(digitalRead(MICRO) == LOW && aux == 1) { // Transición BTN_MENU
+      
+        digitalWrite(ReleDesfogue, LOW);
+
+        if (segurogas==1){
+        
+        estado = S_SET_P4;
+        V4 = EEPROM[14];
+        S_4 = EEPROM[15];
+        S2 = 2;
+        C = 2;
+        programa4();
+        aux = 0;   
+        break;
+        
+        } 
+        estado = S_SET_P4;
+    V4 = EEPROM[14];
+     G4 = EEPROM[15];
+     S_4 = EEPROM[16];     
+       
+       programa4();
+        aux = 0;   
+        break;
+      }
+
+
+      // proceso
+     //MICRO ENTRADA ENCIENDE DEL PROCESO
+
+    while (digitalRead(MICRO) == HIGH && aux == 0){
+
+seguro = 0;
+    // VACIO 
+    while (V4 > 0 && digitalRead(MICRO) == HIGH && seguro == 0)
+      {
+      printRed4(); 
+     digitalWrite(ReleVacio, HIGH);
+       if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay(500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+       delay (500);          //Descontamos en periodos de 1 segundo
+                if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }          //Descontamos en periodos de 1 segundo
+        V4--;     
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }        } 
+    
+      
+      digitalWrite(ReleVacio, LOW);
+
+// GAS
+      if (digitalRead(InteGas) == HIGH)  {
+         while (G4 > 0 && V4==0 && digitalRead(MICRO) == HIGH && seguro == 0){
+        
+          printGreen4();
+      digitalWrite(ReleGas, HIGH);
+    if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+     delay (500); 
+         if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+     delay (500);        //Descontamos en periodos de 1 segundo
+        G4--;    
+ if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }           segurogas= 0;
+         } 
+      
+      
+      } else if  (digitalRead(InteGas) == LOW){
+      digitalWrite(ReleGas, LOW);
+             segurogas= 1;
+
+      
+      }
+
+    digitalWrite(ReleGas, LOW); 
+
+// COGINETE
+     while (C > 0 && V4==0 && G4 >=0 && digitalRead(MICRO) == HIGH && seguro == 0){
+       
+        printBlue4();
+       digitalWrite(ReleCoginete, HIGH);
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        delay (500);
+            if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }  
+        delay (500);        
+        C--;    
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }        }
+
+    // SELLO
+ 
+      while (S2>0 && V4==0 && G4 >=0 && C == 0 && digitalRead(MICRO) == HIGH && seguro == 0){
+       
+       printBlue4();
+       digitalWrite(ReleSello, HIGH);
+       digitalWrite(ReleCoginete, HIGH);
+if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+     if(S_4 > 0){
+        delay (10);          //Descontamos en periodos de 1 decima
+        S_4--;  
+        if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  } 
+        }
+
+      if(S_4 == 0 ){
+        delay (500);
+          if ( digitalRead(Apagado) == HIGH){
+   seguro = 1;
+  
+  }
+        delay (500);        //Descontamos en periodos de 1 segundo
+        S2--;  
+        
+        }
+ 
+      }
+        digitalWrite(ReleCoginete, LOW);
+       digitalWrite(ReleSello, LOW);
+       //DESFOGUE
+      
+      while (S2==0 && V4==0 && G4 >=0 && C == 0 && digitalRead(MICRO) == HIGH){   
+        printPink();
+       digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+      }
+           //////////////
+      while(digitalRead(MICRO) == HIGH  && seguro == 1  ){
+      digitalWrite(ReleVacio, LOW);
+      digitalWrite(ReleGas, LOW);
+      digitalWrite(ReleSello, LOW);
+      digitalWrite(ReleCoginete, LOW);
+      printPink();
+      digitalWrite(ReleDesfogue, HIGH);
+      delay (300);          //Descontamos en periodos de 1 segundo
+  
+  }
+
+      aux = 1;
+
+
+     }
+    
+
+    }
+      break; //fin p4
+
+
+    
+  };// FIN DEL SWITCH
+ 
+}
